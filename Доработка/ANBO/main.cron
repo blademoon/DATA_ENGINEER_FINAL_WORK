@@ -1,0 +1,4 @@
+# Запускаем SCD-2 каждую ночь в 00:45
+45 00 * * * /usr/bin/python /home/demipt/ANBO/main.py
+# Запускаем формирование отчета рано утром в 04:45 каждый день
+45 04 * * * /usr/bin/python /home/demipt/ANBO/reports.py
