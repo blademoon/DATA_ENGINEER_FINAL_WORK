@@ -1,5 +1,5 @@
 -- 1. Совершение операции при просроченном или заблокированном паспорте.
--- (1) Транзакции только за этот день и предыдущий, накоплением.
+-- (1) Транзакции только за этот день и предыдущий, накоплением (реализованно через запуск процедуры формирования отчета за каждый день).
 -- (2) Данные таблицы измерения актуальные только на этот момент времени.
 -- (3) Не удаленные строки.
 -- (4) Последний день срока действия паспорта - не преступление.
@@ -60,28 +60,65 @@ AND T3.VALID_TO < TO_DATE( '03.03.2021 23:59:59', 'DD.MM.YYYY HH24:MI:SS' );
 
 
 -- 3. Совершение операций в разных городах в течении одного часа.
-Осталось приджойнить к жругим таблицам и записать резкльтат в REP_FRAUD
-
-SELECT
-	*
-FROM(
+-- (1) Транзакции только за этот день и предыдущий, накоплением (реализованно через запуск процедуры формирования отчета за каждый день).
+-- (2) Данные таблицы измерения актуальные только на этот момент времени.
+-- (3) Не удаленные строки.
+-- (4) Расчитаем время между парами соседних транзакций в днях, чтобы получить это время в часах просто умножим результат на 24 и округлим. 
+INSERT INTO DEMIPT.ANBO_REP_FRAUD ( EVENT_DT, PASSPORT, FIO, PHONE, EVENT_TYPE, REPORT_DT)
+SELECT DISTINCT
+    T3.CUR_TRANS_DATE,
+    T6.PASSPORT_NUM,
+    T6.LAST_NAME||' '||T6.FIRST_NAME||' '||T6.PATRONYMIC,
+    T6.PHONE,
+    '3',
+     TO_DATE( '03.03.2021 23:59:59', 'DD.MM.YYYY HH24:MI:SS' )
+FROM (
 	SELECT
-		t1.TRANS_DATE as CUR_TRANS_DATE,
-        t2.TERMINAL_CITY as CUR_TRANS_CITY,
-        LAG(t1.trans_date) over ( PARTITION BY t1.card_num ORDER BY t1.trans_date) AS PREV_TRANS_DATE,
-        LAG(t2.TERMINAL_CITY) over ( PARTITION BY t1.card_num ORDER BY t1.trans_date) AS PREV_TRANS_CITY,
-		24 * ( t1.trans_date - (lag(t1.trans_date) over (partition by t1.card_num order by t1.trans_date) ) ) as DIFF_HOUR
-	FROM 
-		ANBO_DWH_FACT_TRANSACTIONS T1
-	INNER JOIN
-		anbo_dwh_dim_terminals_hist T2
-	ON
-		T1.TERMINAL = T2.TERMINAL_ID
-	AND t1.TRANS_DATE <= TO_DATE( '03.03.2021 23:59:59', 'DD.MM.YYYY HH24:MI:SS' ) -- (1)
-	AND TO_DATE( '03.03.2021 23:59:59', 'DD.MM.YYYY HH24:MI:SS' ) BETWEEN T2.EFFECTIVE_FROM AND T2.EFFECTIVE_TO
-	AND T2.DELETED_FLG = 'N'
-)
-WHERE
-	DIFF_HOUR <=1
-AND
-    CUR_TRANS_CITY != PREV_TRANS_CITY;
+	-- Нужно выбрать только необходимые поля!
+		CUR_CARD_NUM,
+        CUR_TRANS_DATE,
+        PREV_TRANS_DATE,
+        DIFF_HOUR,
+        CUR_TRANS_CITY,
+        PREV_TRANS_CITY
+	FROM(
+		SELECT
+			T1.CARD_NUM as CUR_CARD_NUM,
+			t1.TRANS_DATE as CUR_TRANS_DATE,
+			LAG(t1.trans_date) over ( PARTITION BY t1.card_num ORDER BY t1.trans_date) AS PREV_TRANS_DATE,
+			ROUND((24 * ( t1.trans_date - (lag(t1.trans_date) over (partition by t1.card_num order by t1.trans_date) ) ) ) ) as DIFF_HOUR, -- (4)
+			t2.TERMINAL_CITY as CUR_TRANS_CITY,
+			LAG(t2.TERMINAL_CITY) over ( PARTITION BY t1.card_num ORDER BY t1.trans_date) AS PREV_TRANS_CITY
+		FROM 
+			DEMIPT.ANBO_DWH_FACT_TRANSACTIONS T1
+		LEFT JOIN
+			DEMIPT.anbo_dwh_dim_terminals_hist T2
+		ON
+			T1.TERMINAL = T2.TERMINAL_ID
+		AND t1.TRANS_DATE <= TO_DATE( '03.03.2021 23:59:59', 'DD.MM.YYYY HH24:MI:SS' ) -- (1)
+		AND TO_DATE( '03.03.2021 23:59:59', 'DD.MM.YYYY HH24:MI:SS' ) BETWEEN T2.EFFECTIVE_FROM AND T2.EFFECTIVE_TO --(2)
+		AND T2.DELETED_FLG = 'N' -- (3)
+	)
+	WHERE
+		DIFF_HOUR <=1
+	AND
+		CUR_TRANS_CITY != PREV_TRANS_CITY
+) T3
+LEFT JOIN DEMIPT.ANBO_DWH_DIM_CARDS_HIST T4
+ON T3.CUR_CARD_NUM = T4.CARD_NUM
+AND TO_DATE( '03.03.2021 23:59:59', 'DD.MM.YYYY HH24:MI:SS' ) BETWEEN T4.EFFECTIVE_FROM AND T4.EFFECTIVE_TO --(2)
+AND T4.DELETED_FLG = 'N' -- (3)
+LEFT JOIN DEMIPT.ANBO_DWH_DIM_ACCOUNTS_HIST T5
+ON T4.ACCOUNT_NUM = T5.ACCOUNT_NUM
+AND TO_DATE( '03.03.2021 23:59:59', 'DD.MM.YYYY HH24:MI:SS' ) BETWEEN T5.EFFECTIVE_FROM AND T5.EFFECTIVE_TO -- (2)
+AND T5.DELETED_FLG = 'N' -- (3)
+LEFT JOIN DEMIPT.ANBO_DWH_DIM_CLIENTS_HIST T6
+ON T5.CLIENT = T6.CLIENT_ID
+AND TO_DATE( '03.03.2021 23:59:59', 'DD.MM.YYYY HH24:MI:SS' ) BETWEEN T6.EFFECTIVE_FROM AND T6.EFFECTIVE_TO -- (2)
+AND T6.DELETED_FLG = 'N'; -- (3)
+
+	
+	
+	
+	
+	
